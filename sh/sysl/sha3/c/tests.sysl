@@ -1,0 +1,31 @@
+module sh.sysl.sha3.c
+@tests
+
+// What the raw layer claims, checked against FIPS 202 and the C ABI rather than against the header.
+//
+// **These are the survey's probes, kept.** The module above places the sponge's state inside an
+// ordinary sysl struct, as an array of `u64`, and two facts have to hold for that to be sound rather
+// than merely working today. Both are asserted here, because neither is visible from the pleasant
+// layer and a change in either would corrupt digests rather than fail to compile.
+
+// **The load-bearing one.** `[N]u64` storage is 8-aligned by construction, and that is the *only*
+// thing making the state's address good enough for `sha3_ctx_t`. If the C type ever wanted more --
+// a vector-unit rewrite reading the lanes 16 bytes at a time would -- the array would be under-aligned
+// and every digest wrong, so this is the assertion that would catch it.
+//
+// Eight is not arbitrary: the state is `uint64_t q[25]`, and a 64-bit lane wants a 64-bit boundary.
+@test("the sponge state is 8-aligned, which is what a u64 array supplies")
+state_wants_eight_byte_alignment()
+    assert_eq(CTX_ALIGN, 8)
+
+// FIPS 202 fixes Keccak's state at 1600 bits, so the context cannot be smaller than the 200 bytes
+// that holds it -- whatever bookkeeping upstream puts after it.
+@test("the context holds a whole 1600-bit Keccak state")
+context_holds_the_state()
+    assert(CTX_SIZE >= 200, "a 1600-bit state is 200 bytes")
+
+// The rounding the module above does must not lose a byte. `WORDS` there is `(CTX_SIZE + 7) / 8`, and
+// this is that arithmetic checked at the only place both numbers are in scope.
+@test("rounding the context up to whole lanes covers all of it")
+rounding_covers_the_context()
+    assert((CTX_SIZE + 7) / 8 * 8 >= CTX_SIZE, "the rounded lane count covers the context")

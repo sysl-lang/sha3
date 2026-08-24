@@ -1,0 +1,237 @@
+// SHA-3 and SHAKE, bound to tiny_sha3.
+//
+// The four fixed-length digests answer an array and take nothing but the message:
+//
+//     import sh.sysl.sha3.sha3_256
+//     import sysl.encoding.hex_string
+//
+//     val digest = sha3_256("abc".bytes)
+//
+//     print(hex_string(digest))
+//
+// The two extendable-output functions write as many bytes as you give them room for, because that is
+// what "extendable output" means -- a SHAKE has no natural digest length and asking for 16 bytes or
+// 1,000 is equally correct:
+//
+//     var key: []u8 = [0; 64]
+//
+//     shake256(secret, key)
+//
+// ## Nothing here needs storage from you, and that is unusual for a binding in this organisation
+//
+// A sponge's state is 216 bytes and every other vendored-C package here would have made that the
+// caller's problem -- miniz's `Deflater` is *placed* in a slice you own, because sysl has no
+// allocator to reach for.
+//
+// **This one does not have to, because SHA-3's state holds no pointers.** It is 25 lanes of 64 bits
+// and three counters, so it can be copied from one address to another and keep working. That lets the
+// state live *inside* a `Hasher` as a field, which means a `Hasher` is an ordinary sysl value: it goes
+// in a `var`, it can be passed to a function, and it can be returned from one. There is no storage
+// argument, no alignment to get right, and nothing that has to outlive anything.
+//
+// The `hasher_relocates` test is what pins that reading, and it is the reason it exists.
+//
+// ## What it asks of the machine
+//
+// Nothing at all. `sha3.c` includes `sha3.h`, which includes `<stddef.h>` and `<stdint.h>`, and that
+// is the entire list -- no allocator, no clock, no file, no string function, not even `memcpy`.
+//
+// **So unlike most of this organisation's bindings, `requires {}` here really does mean it builds for
+// a bare target**: qrcodegen and miniz make the same capability claim and still fail on a freestanding
+// target because their C reaches for `<assert.h>` or `<string.h>`. This one compiles for
+// `thumb-freestanding`, and the package's README says how that was checked rather than assumed.
+
+module sh.sysl.sha3
+
+import sh.sysl.sha3.c
+import sysl.slices.{as_ptr, as_mut_ptr}
+
+// The sponge state as whole 64-bit lanes.
+//
+// **The `u64` is doing alignment's job.** `sha3_ctx_t` reads its state as `uint64_t q[25]`, so it
+// wants an 8-aligned address; an array of `u64` has one by construction, where a `[216]u8` would
+// promise nothing and need the address arithmetic every other caller-placed binding here writes in C.
+// The size still comes from the header -- this is a rounding of it, not a transcription.
+private const WORDS: usize = (c.CTX_SIZE + 7) / 8
+
+// Which of the four SHA-3 digests to compute.
+//
+// **These are four different algorithms, not four truncations of one.** The digest length sets the
+// sponge's rate to `200 - 2 * len`, so SHA3-256 and the first 32 bytes of SHA3-512 disagree from the
+// very first byte. `bits_from_the_name` pins that.
+enum Size
+    Bits224
+    Bits256
+    Bits384
+    Bits512
+
+    // The digest length in bytes, which is the number tiny_sha3 actually takes.
+    bytes(self) -> usize = self match
+        Bits224 -> 28
+        Bits256 -> 32
+        Bits384 -> 48
+        Bits512 -> 64
+end Size
+
+// Which SHAKE, named for its security level rather than its output length -- a SHAKE has no output
+// length until you ask for one.
+enum Rate
+    Shake128
+    Shake256
+
+    // What tiny_sha3 wants at `init`: 16 or 32, setting the rate to 168 or 136 bytes.
+    private seed(self) -> usize = self match
+        Shake128 -> 16
+        Shake256 -> 32
+end Rate
+
+// ## The one-shots
+//
+// Each answers its digest by value. There is no failure mode: SHA-3 consumes any input and always
+// produces exactly its digest length.
+
+// SHA3-224 of `data`.
+sha3_224(data: []const u8) -> [28]u8
+    var out: [28]u8 = [0; 28]
+
+    c.oneshot(as_ptr(data), data.len, as_mut_ptr(out), 28)
+
+    out
+end sha3_224
+
+// SHA3-256 of `data`. The one to reach for absent a reason.
+sha3_256(data: []const u8) -> [32]u8
+    var out: [32]u8 = [0; 32]
+
+    c.oneshot(as_ptr(data), data.len, as_mut_ptr(out), 32)
+
+    out
+end sha3_256
+
+// SHA3-384 of `data`.
+sha3_384(data: []const u8) -> [48]u8
+    var out: [48]u8 = [0; 48]
+
+    c.oneshot(as_ptr(data), data.len, as_mut_ptr(out), 48)
+
+    out
+end sha3_384
+
+// SHA3-512 of `data`.
+sha3_512(data: []const u8) -> [64]u8
+    var out: [64]u8 = [0; 64]
+
+    c.oneshot(as_ptr(data), data.len, as_mut_ptr(out), 64)
+
+    out
+end sha3_512
+
+// SHAKE128 of `data`, filling `out` however long it is.
+shake128(data: []const u8, out: []u8)
+    var s = shake(Rate.Shake128)
+
+    s.push(data)
+    s.squeeze(out)
+
+// SHAKE256 of `data`, filling `out` however long it is.
+//
+// **This is the one to derive a key with.** Ask for the number of bytes the key needs and take them;
+// there is no truncation of a longer digest involved and no wasted work.
+shake256(data: []const u8, out: []u8)
+    var s = shake(Rate.Shake256)
+
+    s.push(data)
+    s.squeeze(out)
+
+// ## Feeding a message in pieces
+
+// A SHA-3 digest computed over input that arrives in more than one piece.
+//
+// The state lives in the struct, so this is an ordinary value -- `var h = hasher()` and nothing else
+// to arrange.
+struct Hasher
+    private state: [WORDS]u64
+
+    // The digest length this hasher was made for, in bytes.
+    len: usize
+
+    // Whether `finish` has already been called. A sponge that has been squeezed cannot absorb again.
+    private done: bool
+
+    private ctx(*self) -> *c.Ctx = ptr_cast(&self.state[0])
+
+    // Absorb another piece of the message. The pieces need no particular size and their boundaries do
+    // not affect the digest -- pushing "abc" is the same as pushing "a" then "bc".
+    push(*self, data: []const u8)
+        require !self.done, "a hasher cannot absorb more input after finish"
+
+        c.update(self.ctx(), as_ptr(data), data.len)
+
+    // Write the digest into `digest`, which must be exactly `len` bytes.
+    //
+    // The hasher is spent afterwards; `reset` makes it usable again.
+    finish(*self, digest: []u8)
+        require !self.done, "a hasher may only be finished once"
+        require digest.len == self.len, "the digest buffer must be exactly this hasher's length"
+
+        c.finish(as_mut_ptr(digest), self.ctx())
+
+        self.done = true
+
+    // Begin again, for another message of the same length.
+    reset(*self)
+        c.init(self.ctx(), int(self.len))
+
+        self.done = false
+end Hasher
+
+// A hasher for `size`, defaulting to SHA3-256.
+hasher(size: Size = Size.Bits256) -> Hasher
+    var h = Hasher([0; WORDS], size.bytes(), false)
+
+    c.init(h.ctx(), int(h.len))
+
+    h
+end hasher
+
+// ## Squeezing as much output as you want
+
+// A SHAKE, which absorbs a message and then produces output without limit.
+//
+// **The two phases are ordered and the type enforces it**: every `push` must come before every
+// `squeeze`, because closing the absorbing phase is what makes output possible. Pushing after a
+// squeeze stops rather than quietly hashing something else.
+struct Shake
+    private state: [WORDS]u64
+    private squeezing: bool
+
+    private ctx(*self) -> *c.Ctx = ptr_cast(&self.state[0])
+
+    // Absorb another piece of the message.
+    push(*self, data: []const u8)
+        require !self.squeezing, "a shake cannot absorb more input once it has been squeezed"
+
+        c.update(self.ctx(), as_ptr(data), data.len)
+
+    // Fill `out` with the next bytes of the output stream.
+    //
+    // **Calling this twice continues the stream rather than restarting it**, so squeezing 32 bytes and
+    // then 32 more gives the same 64 bytes as asking for 64 at once. `squeeze_continues_the_stream`
+    // pins that, because it is the property that makes a XOF worth having.
+    squeeze(*self, out: []u8)
+        if !self.squeezing
+            c.xof(self.ctx())
+
+            self.squeezing = true
+
+        c.out(self.ctx(), as_mut_ptr(out), out.len)
+end Shake
+
+// A shake at `rate`, defaulting to SHAKE256.
+shake(rate: Rate = Rate.Shake256) -> Shake
+    var s = Shake([0; WORDS], false)
+
+    c.init(s.ctx(), int(rate.seed()))
+
+    s
+end shake

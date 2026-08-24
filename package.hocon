@@ -1,0 +1,50 @@
+// SHA-3 and SHAKE, bound to Markku-Juhani O. Saarinen's tiny_sha3.
+//
+// There is no `dependencies` block because tiny_sha3 depends on nothing: `sha3.c` includes `sha3.h`,
+// which includes `<stddef.h>` and `<stdint.h>`, and that is the whole list. Both files are carried in
+// this package, because tiny_sha3 is not a library anybody has installed.
+//
+// This is the block a *consumer* writes to reach this package:
+//
+//     dependencies {
+//       sha3 { git = "github.com/sysl-lang/sha3", version = "0.1.0" }
+//     }
+//
+// The coordinate is identity rather than a URL, so it carries no `https://`, and the version is the
+// tag `v0.1.0` on this repository.
+
+package {
+  name    = "sha3"
+  version = "0.1.0"
+
+  // The compiler this was built and verified against, rather than a probed floor. Nothing here
+  // reaches for a recent language feature; the number says what was actually run, which is the only
+  // claim worth making without an older compiler to try.
+  sysl = "0.0.77"
+}
+
+// **There is deliberately no `requires` block, and in this package the claim is unusually strong.**
+//
+// A capability clause says what a package asks of *sysl*, and what tiny_sha3 does is arithmetic on
+// bytes it was handed. It opens no file, reads no clock, calls no allocator -- and, unlike every other
+// vendored-C package in this organisation, reaches for no C library function at all. There is no
+// `memcpy`, no `assert`, no `strlen`: the implementation copies with explicit loops, which is what
+// makes the include list two headers long.
+//
+// **So here `requires {}` also means it compiles for a bare target, which is a separate question and
+// usually a different answer.** qrcodegen and miniz make the same capability claim and still fail on
+// `--target thumb-freestanding`, because clang gives a freestanding target `stdint.h` and `stddef.h`
+// and not `assert.h`, `stdlib.h` or `string.h`. This package needs only the two it gets.
+//
+// That was checked by running it rather than by reading the includes:
+//
+//     sysl build-lib . --target thumb-freestanding
+//
+// **What is NOT here is a `@link` directive**, and the absence is the point of vendoring: the
+// implementation is compiled from the `.c` carried in this package, so there is no external library
+// for the linker to be given.
+//
+// **Nor is there a `defines` block.** tiny_sha3 has two compile-time options, `KECCAKF_ROUNDS` and
+// `ROTL64`, and both are `#ifndef`-guarded defaults that this package leaves exactly as upstream set
+// them. `KECCAKF_ROUNDS` is 24 because FIPS 202 says Keccak-f[1600] has 24 rounds -- it is a knob for
+// people studying reduced-round Keccak, and moving it would stop this being SHA-3.

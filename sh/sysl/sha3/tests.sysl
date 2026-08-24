@@ -1,0 +1,286 @@
+module sh.sysl.sha3
+@tests
+
+import sysl.encoding.hex_string
+
+// The published vectors, run by `sysl test .`.
+//
+// **Nothing here is checked against a value this binding produced.** Every expected string below was
+// taken from two independent implementations that agree -- Python's `hashlib` and OpenSSL's `dgst` --
+// and the short ones are the values FIPS 202 itself prints. A test that passes therefore says the
+// bytes crossed the boundary intact and the right algorithm ran; a binding that passed the wrong
+// digest length or dropped a block could not make one of them pass by coincidence.
+//
+// **Two oracles rather than one is deliberate.** A lone disagreement between a binding and a single
+// reference is indistinguishable from a bug in the binding, and an hour goes into the wrong half.
+//
+// The behavioural tests below cover what no vector can: that splitting a message does not change its
+// digest, that a squeezed stream continues rather than restarts, and that the four digest lengths are
+// four algorithms rather than truncations of one.
+
+// The message every multi-block test uses: 1,000 bytes of 'a', which is longer than every one of the
+// four rates (144, 136, 104 and 72 bytes) and so forces the sponge to permute repeatedly.
+private thousand_a() -> []u8 = [u8('a'); 1000]
+
+// -- SHA-3, the empty message --------------------------------------------------------------------
+
+@test("SHA3-224 of the empty message")
+sha3_224_empty()
+    assert_eq(hex_string(sha3_224("".bytes)),
+              "6b4e03423667dbb73b6e15454f0eb1abd4597f9a1b078e3f5b5a6bc7")
+
+@test("SHA3-256 of the empty message")
+sha3_256_empty()
+    assert_eq(hex_string(sha3_256("".bytes)),
+              "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
+
+@test("SHA3-384 of the empty message")
+sha3_384_empty()
+    assert_eq(hex_string(sha3_384("".bytes)),
+              "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2a" +
+              "c3713831264adb47fb6bd1e058d5f004")
+
+@test("SHA3-512 of the empty message")
+sha3_512_empty()
+    assert_eq(hex_string(sha3_512("".bytes)),
+              "a69f73cca23a9ac5c8b567dc185a756e97c982164fe25859e0d1dcc1475c80a6" +
+              "15b2123af1f5f94c11e3e9402c3ac558f500199d95b6d3e301758586281dcd26")
+
+// -- SHA-3, "abc" --------------------------------------------------------------------------------
+
+@test("SHA3-224 of abc")
+sha3_224_abc()
+    assert_eq(hex_string(sha3_224("abc".bytes)),
+              "e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf")
+
+@test("SHA3-256 of abc")
+sha3_256_abc()
+    assert_eq(hex_string(sha3_256("abc".bytes)),
+              "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532")
+
+@test("SHA3-384 of abc")
+sha3_384_abc()
+    assert_eq(hex_string(sha3_384("abc".bytes)),
+              "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b2" +
+              "98d88cea927ac7f539f1edf228376d25")
+
+@test("SHA3-512 of abc")
+sha3_512_abc()
+    assert_eq(hex_string(sha3_512("abc".bytes)),
+              "b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e" +
+              "10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0")
+
+// -- SHA-3 over more than one block ----------------------------------------------------------------
+//
+// **This is the half of the vector set that matters most for a binding**, because a length that was
+// dropped or a pointer that was not advanced shows up here and not on a message that fits in a single
+// permutation.
+
+@test("SHA3-224 of a thousand a's, which spans several blocks")
+sha3_224_multiblock()
+    assert_eq(hex_string(sha3_224(thousand_a())),
+              "2461344b84416db8fe01c2a4966fea019590c231dd5724c1bfc26745")
+
+@test("SHA3-256 of a thousand a's")
+sha3_256_multiblock()
+    assert_eq(hex_string(sha3_256(thousand_a())),
+              "8f3934e6f7a15698fe0f396b95d8c4440929a8fa6eae140171c068b4549fbf81")
+
+@test("SHA3-384 of a thousand a's")
+sha3_384_multiblock()
+    assert_eq(hex_string(sha3_384(thousand_a())),
+              "ccf4495ff20b4b33a1cc1917f9f0fe0fcb5e3d08e542cf4d4a90dd950b748e7e" +
+              "1cc07d2f3b36d62dd240724417cdd81b")
+
+@test("SHA3-512 of a thousand a's")
+sha3_512_multiblock()
+    assert_eq(hex_string(sha3_512(thousand_a())),
+              "ac7e95cc95aa7f24aaa95e040ca0c79b39cd9cc84a10abb84ddd8dd5e4b45cf9" +
+              "6543aaa70d0ef99fbf8d2769639981ee1fd0b0276f4756b9d504d0b7de19b700")
+
+// -- The four are four algorithms ------------------------------------------------------------------
+
+// **The digest length is not a truncation and this is what says so.** SHA3-256 and SHA3-512 of the
+// same message disagree from the very first byte, because the length sets the sponge's rate and
+// therefore changes the padding and the number of permutations.
+@test("a shorter digest is not a prefix of a longer one")
+lengths_are_not_truncations()
+    val short = sha3_256("abc".bytes)
+    val long = sha3_512("abc".bytes)
+
+    assert(short[0] != long[0], "SHA3-256 and SHA3-512 of abc differ in their first byte")
+
+@test("each size answers its own length")
+sizes_are_their_lengths()
+    assert_eq(Size.Bits224.bytes(), 28)
+    assert_eq(Size.Bits256.bytes(), 32)
+    assert_eq(Size.Bits384.bytes(), 48)
+    assert_eq(Size.Bits512.bytes(), 64)
+
+// -- Feeding a message in pieces -------------------------------------------------------------------
+
+@test("a hasher agrees with the one-shot")
+hasher_agrees_with_oneshot()
+    var h = hasher()
+    var d: []u8 = [0; 32]
+
+    h.push("abc".bytes)
+    h.finish(d)
+
+    assert_eq(hex_string(d), hex_string(sha3_256("abc".bytes)))
+
+// **Where the pieces are cut must not matter**, which is the property a caller streaming a file over
+// a socket is relying on without ever thinking about it.
+@test("the digest does not depend on where the message was split")
+splitting_does_not_matter()
+    var one = hasher()
+    var many = hasher()
+    var a: []u8 = [0; 32]
+    var b: []u8 = [0; 32]
+
+    one.push(thousand_a())
+    one.finish(a)
+
+    val whole = thousand_a()
+
+    many.push(whole[0..<1])
+    many.push(whole[1..<137])
+    many.push(whole[137..<999])
+    many.push(whole[999..<1000])
+    many.finish(b)
+
+    assert_eq(hex_string(b), hex_string(a))
+
+@test("a hasher of another size answers that size")
+hasher_takes_a_size()
+    var h = hasher(Size.Bits512)
+    var d: []u8 = [0; 64]
+
+    h.push("abc".bytes)
+    h.finish(d)
+
+    assert_eq(hex_string(d), hex_string(sha3_512("abc".bytes)))
+
+@test("reset makes a hasher usable again")
+reset_starts_over()
+    var h = hasher()
+    var first: []u8 = [0; 32]
+    var second: []u8 = [0; 32]
+
+    h.push("nonsense".bytes)
+    h.finish(first)
+
+    h.reset()
+    h.push("abc".bytes)
+    h.finish(second)
+
+    assert_eq(hex_string(second), hex_string(sha3_256("abc".bytes)))
+
+// The state holds no pointers, so a `Hasher` is an ordinary value that may be copied and keep
+// working. **This is the test that licenses the whole design** -- it is why the state lives inside the
+// struct instead of in a caller-supplied slice, and why this package needs no alignment shim.
+@test("a hasher survives being moved")
+hasher_relocates()
+    var h = hasher()
+
+    h.push("a".bytes)
+
+    var moved = h
+
+    moved.push("bc".bytes)
+
+    var d: []u8 = [0; 32]
+
+    moved.finish(d)
+
+    assert_eq(hex_string(d), hex_string(sha3_256("abc".bytes)))
+
+// -- SHAKE -----------------------------------------------------------------------------------------
+
+@test("SHAKE128 of the empty message, 32 bytes")
+shake128_empty()
+    var out: []u8 = [0; 32]
+
+    shake128("".bytes, out)
+
+    assert_eq(hex_string(out), "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26")
+
+@test("SHAKE128 of abc, 32 bytes")
+shake128_abc()
+    var out: []u8 = [0; 32]
+
+    shake128("abc".bytes, out)
+
+    assert_eq(hex_string(out), "5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc8")
+
+@test("SHAKE256 of the empty message, 32 bytes")
+shake256_empty()
+    var out: []u8 = [0; 32]
+
+    shake256("".bytes, out)
+
+    assert_eq(hex_string(out), "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f")
+
+@test("SHAKE256 of abc, 32 bytes")
+shake256_abc()
+    var out: []u8 = [0; 32]
+
+    shake256("abc".bytes, out)
+
+    assert_eq(hex_string(out), "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739")
+
+// **The output length is a request, not a property of the algorithm**, so asking for 64 bytes must
+// give the 32-byte answer with 32 more after it rather than a different digest. That distinguishes a
+// XOF from a hash whose output was padded.
+@test("asking for more bytes extends the same stream")
+longer_output_extends()
+    var out: []u8 = [0; 64]
+
+    shake256("abc".bytes, out)
+
+    assert_eq(hex_string(out),
+              "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739" +
+              "d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4")
+
+// The same property from the other side: two squeezes of 32 give what one squeeze of 64 gives.
+@test("squeezing twice continues the stream")
+squeeze_continues_the_stream()
+    var s = shake()
+    var first: []u8 = [0; 32]
+    var second: []u8 = [0; 32]
+
+    s.push("abc".bytes)
+    s.squeeze(first)
+    s.squeeze(second)
+
+    assert_eq(hex_string(first) + hex_string(second),
+              "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739" +
+              "d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4")
+
+@test("a shake absorbs a split message the same as a whole one")
+shake_splitting_does_not_matter()
+    var s = shake(Rate.Shake128)
+    var streamed: []u8 = [0; 32]
+    var whole: []u8 = [0; 32]
+
+    s.push("a".bytes)
+    s.push("bc".bytes)
+    s.squeeze(streamed)
+
+    shake128("abc".bytes, whole)
+
+    assert_eq(hex_string(streamed), hex_string(whole))
+
+// A zero-length request is legal and must leave the stream where it was, which is the edge a caller
+// draining into a buffer it sized at run time will hit.
+@test("squeezing nothing takes nothing from the stream")
+empty_squeeze_is_a_no_op()
+    var s = shake()
+    var nothing: []u8 = [0; 0]
+    var out: []u8 = [0; 32]
+
+    s.push("abc".bytes)
+    s.squeeze(nothing)
+    s.squeeze(out)
+
+    assert_eq(hex_string(out), "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739")

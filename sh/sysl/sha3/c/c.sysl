@@ -1,0 +1,67 @@
+// tiny_sha3 as C declares it: seven functions and the size of the state they all work through.
+//
+// **Everything that is C lives in this directory** -- `sha3.c` and `sha3.h` exactly as upstream
+// publishes them, and this file of declarations over them. Nothing here is meant to be called by a
+// program: a digest length is an `int` that silently selects the algorithm, a failure is a return
+// value nobody checks, and the sponge's state is a slab of memory with a union in it. The module
+// above turns those into `sha3_256`, `Hasher` and `Shake`.
+//
+// **There is no shim.c, and that is worth saying because most bindings here have one.** Upstream's
+// three macros are `shake128_init(c)`, `shake256_init(c)` and `shake_update`, and all three expand to
+// a call this file already declares -- `sha3_init(c, 16)`, `sha3_init(c, 32)` and `sha3_update`. A
+// macro needs a shim when it has no symbol to link *and* no spelling in terms of one; these have the
+// second, so the pleasant layer just makes the call.
+
+module sh.sysl.sha3.c
+
+@include("sha3.h")
+
+// ## The state, asked for rather than transcribed
+//
+// `sha3_ctx_t` is a 200-byte union -- `uint8_t b[200]` over `uint64_t q[25]` -- followed by three
+// `int`s of bookkeeping. The union is the reason this is opaque rather than declared: an untagged
+// union is one of the three shapes sysl cannot spell.
+//
+// **The size is asked of the C compiler because it is interface, not implementation.** The module
+// above sizes a hasher's storage from it, so a number written down here would be a second copy of
+// something the header already knows.
+c const
+    CTX_SIZE:  usize = "sizeof(sha3_ctx_t)"
+    CTX_ALIGN: usize = "_Alignof(sha3_ctx_t)"
+
+// The sponge state. Opaque: a program has no business reading it, and sysl could not describe it if
+// it wanted to.
+opaque struct Ctx
+
+// ## The OpenSSL-shaped interface
+//
+// `mdlen` is the digest length **in bytes**, and it does more than size the output -- it sets the
+// sponge's rate to `200 - 2 * mdlen`, which is what makes SHA3-256 a different algorithm from the
+// first 32 bytes of SHA3-512 rather than a truncation of it. All three answer 1 and none of them can
+// fail, which is why the module above ignores what they return.
+extern "sha3_init" init(c: *Ctx, mdlen: int) -> int
+
+extern "sha3_update" update(c: *Ctx, data: *u8, len: usize) -> int
+
+// `md` is written `mdlen` bytes, the length given at `init`.
+extern "sha3_final" finish(md: *u8, c: *Ctx) -> int
+
+// Init, update and final in one call, with the state on C's own stack. The module above uses this for
+// the fixed-length one-shots, which is why they need no storage from their caller.
+extern "sha3" oneshot(data: *u8, len: usize, md: *u8, mdlen: int) -> *u8
+
+// ## The extendable-output half
+//
+// `shake_xof` closes the absorbing phase and opens the squeezing one; after it, `shake_out` may be
+// called as many times as the caller likes and the stream continues where it left off. Neither has a
+// length limit, which is the whole point of a XOF.
+extern "shake_xof" xof(c: *Ctx)
+
+extern "shake_out" out(c: *Ctx, out: *u8, len: usize)
+
+// The Keccak-f[1600] permutation itself, over the 25 lanes of a state.
+//
+// Bound because it is the primitive everything above is built from and a program doing something
+// Keccak-shaped that is not SHA-3 would otherwise have to vendor its own copy. It is not reached by
+// the module above.
+extern "sha3_keccakf" keccakf(st: *u64)
