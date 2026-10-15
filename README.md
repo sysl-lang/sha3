@@ -3,6 +3,8 @@
 SHA-3 and SHAKE for [sysl](https://github.com/sysl-lang/sysl) — the four FIPS 202 digests and both
 extendable-output functions, bound to [tiny_sha3](https://github.com/mjosaarinen/tiny_sha3).
 
+*An independent sysl package for tiny_sha3. It is not affiliated with or endorsed by tiny_sha3's authors or trademark holders.*
+
 ```sysl
 import sh.sysl.sha3.{sha3_256, shake256}
 import sysl.encoding.hex_string
