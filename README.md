@@ -116,7 +116,7 @@ sh/sysl/sha3/
         sha3.c          vendored from mjosaarinen/tiny_sha3 at dcbb319, unmodified
         sha3.h
         tests.sysl      the ABI facts the layer above depends on
-package.hocon
+sysl.hocon
 ```
 
 **Everything that is C lives in `c/`**, module `sh.sysl.sha3.c`. That is the two-layer shape every
@@ -134,7 +134,7 @@ being SHA-3.
 
 ## Using it
 
-Name it in your project's `package.hocon` and `sysl build` fetches it:
+Name it in your project's `sysl.hocon` and `sysl build` fetches it:
 
 ```hocon
 dependencies {

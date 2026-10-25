@@ -17,10 +17,9 @@ package {
   name    = "sha3"
   version = "0.1.0"
 
-  // The compiler this was built and verified against, rather than a probed floor. Nothing here
-  // reaches for a recent language feature; the number says what was actually run, which is the only
-  // claim worth making without an older compiler to try.
-  sysl = "0.0.77"
+  // The compiler this was built and verified against. The raw-form import (`sysl.raw.ptr_cast`)
+  // does not exist on 0.5.x.
+  sysl = "0.6.0"
 }
 
 // **There is deliberately no `requires` block, and in this package the claim is unusually strong.**

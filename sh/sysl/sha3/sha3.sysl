@@ -44,6 +44,7 @@
 module sh.sysl.sha3
 
 import sh.sysl.sha3.c
+import sysl.raw.ptr_cast
 import sysl.slices.{as_ptr, as_mut_ptr}
 
 // The sponge state as whole 64-bit lanes.
