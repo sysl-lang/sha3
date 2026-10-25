@@ -138,7 +138,7 @@ Name it in your project's `sysl.hocon` and `sysl build` fetches it:
 
 ```hocon
 dependencies {
-  sha3 { git = "github.com/sysl-lang/sha3", version = "0.1.0" }
+  sha3 { git = "github.com/sysl-lang/sha3", version = "0.1.1" }
 }
 ```
 

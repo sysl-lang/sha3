@@ -7,15 +7,15 @@
 // This is the block a *consumer* writes to reach this package:
 //
 //     dependencies {
-//       sha3 { git = "github.com/sysl-lang/sha3", version = "0.1.0" }
+//       sha3 { git = "github.com/sysl-lang/sha3", version = "0.1.1" }
 //     }
 //
 // The coordinate is identity rather than a URL, so it carries no `https://`, and the version is the
-// tag `v0.1.0` on this repository.
+// tag `v0.1.1` on this repository.
 
 package {
   name    = "sha3"
-  version = "0.1.0"
+  version = "0.1.1"
 
   // The compiler this was built and verified against. The raw-form import (`sysl.raw.ptr_cast`)
   // does not exist on 0.5.x.
